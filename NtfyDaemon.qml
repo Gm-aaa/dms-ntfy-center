@@ -64,20 +64,16 @@ PluginComponent {
             updateGlobalState("messages", next);
             updateGlobalState("lastMessage", message);
         }
-        if (notify && !duplicate && showNotifications) {
-            Quickshell.execDetached([
-                "dms",
-                "notify",
-                message.title || "ntfy",
-                message.message || "",
-                "--app",
-                "ntfy",
-                "--icon",
-                "notifications_active",
-                "--timeout",
-                "8000"
-            ]);
-        }
+        if (notify && !duplicate && showNotifications)
+            showSystemNotification(message);
+    }
+
+    function showSystemNotification(message) {
+        const process = notificationProcessComponent.createObject(root, {
+            notificationTitle: message.title || "ntfy",
+            notificationBody: message.message || ""
+        });
+        process.running = true;
     }
 
     function handleWatchLine(line) {
@@ -123,6 +119,42 @@ PluginComponent {
     }
 
     onPluginDataChanged: configurationTimer.restart()
+
+    Component {
+        id: notificationProcessComponent
+
+        Process {
+            property string notificationTitle: ""
+            property string notificationBody: ""
+
+            command: [
+                "dms",
+                "notify",
+                notificationTitle,
+                notificationBody,
+                "--app",
+                "ntfy",
+                "--icon",
+                "notifications_active",
+                "--timeout",
+                "8000"
+            ]
+
+            onExited: exitCode => {
+                if (exitCode !== 0) {
+                    Quickshell.execDetached([
+                        "notify-send",
+                        "--app-name=ntfy",
+                        "--icon=notifications-active",
+                        "--expire-time=8000",
+                        notificationTitle,
+                        notificationBody
+                    ]);
+                }
+                destroy();
+            }
+        }
+    }
 
     Process {
         id: historyProcess

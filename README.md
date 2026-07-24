@@ -21,7 +21,8 @@
 - 连接中断后自动重连
 - 将新消息发送到 DMS 通知中心并显示桌面通知
 - 在 DankBar 弹出面板中查看最近消息
-- 点击历史消息复制正文
+- 自动识别中英文短信中的数字或字母数字验证码
+- 点击验证码消息复制验证码，普通消息仍复制完整正文
 - 从 DankBar 直接发布自定义文本
 - 支持 Access Token 与 HTTP Basic 认证
 - 支持自建 ntfy 和官方 `ntfy.sh`
@@ -134,6 +135,8 @@ qmllint -I /usr/share/quickshell/dms \
   NtfyDaemon.qml NtfyWidget.qml NtfySettings.qml
 
 python3 -m py_compile scripts/ntfy_client.py
+
+python3 -m unittest discover -s tests
 
 jq empty plugin.json
 ```

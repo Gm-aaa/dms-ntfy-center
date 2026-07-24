@@ -255,7 +255,10 @@ PluginComponent {
                     model: root.messages
 
                     delegate: StyledRect {
+                        id: messageDelegate
+
                         required property var modelData
+                        readonly property string verificationCode: modelData.verification_code || ""
 
                         width: messageList.width
                         height: messageColumn.implicitHeight + Theme.spacingM * 2
@@ -302,14 +305,27 @@ PluginComponent {
                                 maximumLineCount: 4
                                 elide: Text.ElideRight
                             }
+
+                            StyledText {
+                                width: parent.width
+                                visible: messageDelegate.verificationCode !== ""
+                                text: "Verification code: " + messageDelegate.verificationCode + " · Click to copy"
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: Font.DemiBold
+                                color: Theme.primary
+                                elide: Text.ElideRight
+                            }
                         }
 
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                Quickshell.execDetached(["dms", "cl", "copy", modelData.message || ""]);
-                                ToastService.showInfo("Message copied");
+                                const copyText = messageDelegate.verificationCode || modelData.message || "";
+                                Quickshell.execDetached(["dms", "cl", "copy", copyText]);
+                                ToastService.showInfo(messageDelegate.verificationCode
+                                    ? "Verification code copied"
+                                    : "Message copied");
                             }
                         }
                     }

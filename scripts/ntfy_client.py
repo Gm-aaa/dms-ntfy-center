@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -13,10 +14,73 @@ from pathlib import Path
 
 
 STATE_DIRECTORY = Path.home() / ".local" / "state" / "dms-ntfy-center"
+VERIFICATION_KEYWORDS = re.compile(
+    r"验证码|校验码|动态码|动态密码|一次性(?:密码|口令)|短信码|认证码|确认码|"
+    r"安全码|登录码|登录代码|验证代码|安全代码|授权码|激活码|"
+    r"verification\s*code|security\s*code|authentication\s*code|"
+    r"confirmation\s*code|login\s*code|one[-\s]?time(?:\s+(?:password|code))?|"
+    r"passcode|\bOTP\b|\b2FA\b|\bMFA\b|\bPIN\b",
+    re.IGNORECASE,
+)
+VERIFICATION_CANDIDATES = re.compile(
+    r"(?<![A-Z0-9])(?:[A-Z0-9]{4,8}|[0-9]{3}[- ][0-9]{3})(?![A-Z0-9])",
+    re.IGNORECASE,
+)
 
 
 def emit(payload):
     print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+
+def normalize_verification_text(text):
+    normalized = []
+    for character in str(text or ""):
+        codepoint = ord(character)
+        if 0xFF10 <= codepoint <= 0xFF19:
+            normalized.append(chr(codepoint - 0xFF10 + ord("0")))
+        elif 0xFF21 <= codepoint <= 0xFF3A:
+            normalized.append(chr(codepoint - 0xFF21 + ord("A")))
+        elif 0xFF41 <= codepoint <= 0xFF5A:
+            normalized.append(chr(codepoint - 0xFF41 + ord("a")))
+        else:
+            normalized.append(character)
+    return "".join(normalized)
+
+
+def span_distance(left, right):
+    if left[1] < right[0]:
+        return right[0] - left[1]
+    if right[1] < left[0]:
+        return left[0] - right[1]
+    return 0
+
+
+def extract_verification_code(text):
+    normalized = normalize_verification_text(text)
+    keyword_spans = [match.span() for match in VERIFICATION_KEYWORDS.finditer(normalized)]
+    if not keyword_spans:
+        return ""
+    candidates = []
+    for match in VERIFICATION_CANDIDATES.finditer(normalized):
+        value = re.sub(r"[- ]", "", match.group(0)).upper()
+        if not any(character.isdigit() for character in value):
+            continue
+        distance = min(
+            span_distance(match.span(), keyword_span) for keyword_span in keyword_spans
+        )
+        if distance <= 80:
+            candidates.append((distance, match.start(), value))
+    if not candidates:
+        return ""
+    candidates.sort()
+    return candidates[0][2]
+
+
+def annotate_message(event):
+    message = dict(event)
+    searchable_text = f"{message.get('title', '')}\n{message.get('message', '')}"
+    message["verification_code"] = extract_verification_code(searchable_text)
+    return message
 
 
 def read_payload():
@@ -109,7 +173,7 @@ def watch(config):
                     event = json.loads(raw_line.decode("utf-8"))
                     if event.get("event") != "message":
                         continue
-                    emit({"kind": "message", "data": event})
+                    emit({"kind": "message", "data": annotate_message(event)})
                     write_last_id(config, event.get("id", ""))
         except KeyboardInterrupt:
             return
@@ -132,7 +196,7 @@ def history(config):
         for raw_line in response:
             event = json.loads(raw_line.decode("utf-8"))
             if event.get("event") == "message":
-                messages.append(event)
+                messages.append(annotate_message(event))
     messages.sort(key=lambda item: item.get("time", 0), reverse=True)
     emit({"kind": "history", "data": messages[:limit]})
 
