@@ -43,14 +43,17 @@ PluginComponent {
     }
 
     function ensureBarWidget() {
+        // 只保证 widget 存在即可，不再强制塞进 rightWidgets（右上角）。
+        // 优先以 centerWidgets 为准；若用户从两处都移除则补回 centerWidgets。
         const bar = SettingsData.barConfigs[0];
         if (!bar)
             return;
-        const rightWidgets = bar.rightWidgets || [];
-        if (rightWidgets.some(item => (typeof item === "string" ? item : item.id) === "ntfyCenter"))
+        const inCenter = (bar.centerWidgets || []).some(item => (typeof item === "string" ? item : item.id) === "ntfyCenter");
+        const inRight = (bar.rightWidgets || []).some(item => (typeof item === "string" ? item : item.id) === "ntfyCenter");
+        if (inCenter || inRight)
             return;
         SettingsData.updateBarConfig(bar.id, {
-            rightWidgets: rightWidgets.concat([{id: "ntfyCenter", enabled: true}])
+            centerWidgets: (bar.centerWidgets || []).concat([{id: "ntfyCenter", enabled: true}])
         });
     }
 
