@@ -17,20 +17,94 @@ PluginComponent {
     readonly property string helper: pluginService
         ? pluginService.getPluginPath("ntfyCenter") + "/scripts/ntfy_client.py"
         : ""
-    readonly property string serverUrl: (pluginData.serverUrl || "https://ntfy.sh").trim()
-    readonly property string topic: (pluginData.topic || "").trim()
-    readonly property string accessToken: pluginData.accessToken || ""
-    readonly property string username: pluginData.username || ""
-    readonly property string password: pluginData.password || ""
-    readonly property bool verifyTls: pluginData.verifyTls ?? true
     readonly property string publishTitle: (pluginData.publishTitle || "From Linux").trim()
-    readonly property bool configured: helper !== "" && serverUrl !== "" && topic !== ""
+    readonly property var subscriptions: normalizeSubscriptions(pluginData)
+    readonly property var publishTargets: enabledSubscriptions(pluginData)
+    readonly property bool configured: helper !== "" && publishTargets.length > 0
+
+    property string selectedSubId: ""
+    readonly property var selectedSub: {
+        if (publishTargets.length === 0)
+            return null;
+        for (let i = 0; i < publishTargets.length; i++) {
+            if (publishTargets[i].id === selectedSubId)
+                return publishTargets[i];
+        }
+        return publishTargets[0];
+    }
+
     property string status: "connecting"
     property string errorText: ""
     property var messages: []
     property bool publishing: false
     property string resultText: ""
     signal publishSucceeded
+
+    // --- shared subscription helpers (inlined; relative .js imports break
+    // --- when Quickshell hot-reloads a component with a ?t= cache-buster) ---
+
+    function normalizeSubscription(raw) {
+        const s = (raw && typeof raw === "object") ? raw : {};
+        let serverUrl = String(s.serverUrl || "https://ntfy.sh").trim();
+        if (!serverUrl)
+            serverUrl = "https://ntfy.sh";
+        return {
+            id: s.id ? String(s.id) : (serverUrl + "|" + String(s.topic || "").trim()),
+            name: s.name ? String(s.name) : "",
+            enabled: s.enabled !== false,
+            serverUrl: serverUrl,
+            topic: String(s.topic || "").trim(),
+            accessToken: s.accessToken ? String(s.accessToken) : "",
+            username: s.username ? String(s.username) : "",
+            password: s.password ? String(s.password) : "",
+            verifyTls: s.verifyTls !== false
+        };
+    }
+
+    function normalizeSubscriptions(data) {
+        const source = data || {};
+        if (source.subscriptions !== undefined && Array.isArray(source.subscriptions)) {
+            const out = [];
+            for (let i = 0; i < source.subscriptions.length; i++)
+                out.push(normalizeSubscription(source.subscriptions[i]));
+            return out;
+        }
+
+        const legacyTopic = String(source.topic || "").trim();
+        if (legacyTopic.length === 0)
+            return [];
+        return [normalizeSubscription({
+            id: "legacy",
+            name: legacyTopic,
+            enabled: true,
+            serverUrl: source.serverUrl || "https://ntfy.sh",
+            topic: legacyTopic,
+            accessToken: source.accessToken || "",
+            username: source.username || "",
+            password: source.password || "",
+            verifyTls: source.verifyTls !== false
+        })];
+    }
+
+    function enabledSubscriptions(data) {
+        const all = normalizeSubscriptions(data);
+        const out = [];
+        for (let i = 0; i < all.length; i++) {
+            if (all[i].enabled !== false)
+                out.push(all[i]);
+        }
+        return out;
+    }
+
+    function subscriptionLabel(sub) {
+        if (!sub)
+            return "ntfy";
+        if (sub.name)
+            return sub.name;
+        if (sub.topic)
+            return sub.topic;
+        return "ntfy";
+    }
 
     function refreshState() {
         if (!pluginService)
@@ -44,8 +118,8 @@ PluginComponent {
         const clean = text.trim();
         if (!clean || publishing)
             return;
-        if (!configured) {
-            resultText = "Configure the ntfy server and topic first";
+        if (!configured || !selectedSub) {
+            resultText = "Configure a subscription first";
             resultTimer.restart();
             return;
         }
@@ -53,12 +127,12 @@ PluginComponent {
         resultText = "";
         const process = publishProcessComponent.createObject(root, {
             requestPayload: JSON.stringify({
-                serverUrl: serverUrl,
-                topic: topic,
-                accessToken: accessToken,
-                username: username,
-                password: password,
-                verifyTls: verifyTls,
+                serverUrl: selectedSub.serverUrl,
+                topic: selectedSub.topic,
+                accessToken: selectedSub.accessToken || "",
+                username: selectedSub.username || "",
+                password: selectedSub.password || "",
+                verifyTls: selectedSub.verifyTls !== false,
                 message: clean,
                 title: publishTitle || "Custom message"
             })
@@ -172,8 +246,10 @@ PluginComponent {
             detailsText: {
                 if (root.status === "unconfigured")
                     return "Not configured";
-                if (root.status === "online")
-                    return "Connected · " + root.topic;
+                if (root.status === "online") {
+                    const count = root.publishTargets.length;
+                    return "Connected · " + count + (count === 1 ? " subscription" : " subscriptions");
+                }
                 return "Disconnected" + (root.errorText ? " · " + root.errorText : "");
             }
             showCloseButton: true
@@ -182,6 +258,28 @@ PluginComponent {
                 width: parent.width
                 height: root.popoutHeight - popoutRoot.headerHeight - popoutRoot.detailsHeight
                 spacing: Theme.spacingS
+
+                DankDropdown {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.spacingS
+                    Layout.rightMargin: Theme.spacingS
+                    visible: root.publishTargets.length > 1
+                    text: "Publish to"
+                    description: ""
+                    currentValue: root.selectedSub ? root.subscriptionLabel(root.selectedSub) : ""
+                    options: root.publishTargets.map(function(sub) {
+                        return root.subscriptionLabel(sub);
+                    })
+                    onValueChanged: value => {
+                        for (let i = 0; i < root.publishTargets.length; i++) {
+                            const candidate = root.publishTargets[i];
+                            if (root.subscriptionLabel(candidate) === value) {
+                                root.selectedSubId = candidate.id;
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -192,7 +290,7 @@ PluginComponent {
                         id: messageInput
 
                         Layout.fillWidth: true
-                        placeholderText: "Publish a message"
+                        placeholderText: root.selectedSub ? "Publish to " + root.subscriptionLabel(root.selectedSub) : "Publish a message"
                         leftIconName: "edit"
                         showClearButton: true
                         enabled: !root.publishing && root.configured
@@ -259,6 +357,7 @@ PluginComponent {
 
                         required property var modelData
                         readonly property string verificationCode: modelData.verification_code || ""
+                        readonly property string sourceLabel: modelData._subName || modelData.topic || ""
 
                         width: messageList.width
                         height: messageColumn.implicitHeight + Theme.spacingM * 2
@@ -294,6 +393,15 @@ PluginComponent {
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
                                 }
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                visible: messageDelegate.sourceLabel !== ""
+                                text: messageDelegate.sourceLabel
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.primary
+                                elide: Text.ElideRight
                             }
 
                             StyledText {

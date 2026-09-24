@@ -1,8 +1,8 @@
 # dms-ntfy-center
 
 一个面向 [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell)
-的 ntfy 消息中心插件。它可以在后台持续接收 ntfy 消息、显示桌面通知和消息
-历史，也可以直接从 DankBar 向同一主题发布自定义文本。
+的 ntfy 消息中心插件。它可以在后台持续接收多个 ntfy 订阅的消息、显示桌面
+通知和消息历史，也可以直接从 DankBar 向指定的订阅发布自定义文本。
 
 ![ntfy Center 效果图](assets/preview.png)
 
@@ -17,10 +17,12 @@
 
 ## 功能
 
+- 同时订阅多个 ntfy 服务器/主题，每个订阅独立连接、独立自动重连
 - 后台保持 ntfy JSON 流订阅，无需打开浏览器
 - 连接中断后自动重连
 - 将新消息发送到 DMS 通知中心并显示桌面通知
-- 在 DankBar 弹出面板中查看最近消息
+- 在 DankBar 弹出面板中查看最近消息，并标注消息来源主题
+- 可从任意订阅启用/停用，无需删除配置
 - 自动识别中英文短信中的数字或字母数字验证码
 - 点击验证码消息复制验证码，普通消息仍复制完整正文
 - 从 DankBar 直接发布自定义文本
@@ -33,8 +35,8 @@
 
 - DankMaterialShell 1.5.0 或更高版本
 - Python 3.10 或更高版本
-- 一个可访问的 ntfy 服务
-- 一个 ntfy 主题
+- 一个或多个可访问的 ntfy 服务
+- 一个或多个 ntfy 主题
 - 若主题受保护，需要具备读取和发布权限的 Token，或用户名与密码
 
 插件同时包含后台 daemon 和 DankBar widget，因此依赖 DMS 1.5.0 引入的
@@ -65,7 +67,7 @@ ln -s /path/to/dms-ntfy-center \
 3. 点击扫描插件。
 4. 启用 `ntfy Center`。
 5. 如果状态栏没有自动出现图标，在 DankBar 布局中加入 `ntfyCenter`。
-6. 打开插件设置并填写服务器地址、主题和认证信息。
+6. 打开插件设置，点击“Add subscription”添加订阅，并填写服务器地址、主题和认证信息。
 
 也可以通过命令重新加载插件：
 
@@ -84,14 +86,28 @@ dms ipc call ntfyCenter status
 所有配置都保存在 DMS 自己的 `ntfyCenter` 插件设置命名空间中，不需要手动
 创建或编辑额外的 JSON 配置文件。
 
-| 配置项 | 默认值 | 说明 |
+### 订阅（Subscriptions）
+
+订阅以列表形式管理，每个订阅包含以下字段：
+
+| 字段 | 默认值 | 说明 |
 | --- | --- | --- |
+| Name | 空 | 可选，显示在界面上的别名；留空则使用主题名 |
+| Enabled | 开启 | 关闭后该订阅保留配置但不再连接 |
 | Server URL | `https://ntfy.sh` | ntfy 服务根地址，不要附加主题路径 |
 | Topic | 空 | 用于订阅和发布的 ntfy 主题 |
 | Access token | 空 | Bearer Token；填写后优先于用户名和密码 |
 | Username | 空 | 可选的 HTTP Basic 用户名 |
 | Password | 空 | 可选的 HTTP Basic 密码 |
 | Verify TLS certificates | 开启 | 验证 HTTPS 证书；仅自签名环境需要关闭 |
+
+同一服务器上的多个主题应分别建立订阅；不同服务器也各自建立订阅。插件会为
+每个启用的订阅启动一个独立的订阅流，并在弹出面板中合并展示消息（标注来源）。
+
+### 全局设置
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
 | Show desktop notifications | 开启 | 收到新消息时显示 DMS 桌面通知 |
 | Message history limit | `20` | 弹出面板最多保留的消息数量，可设为 5–50 |
 | History window | `24h` | 启动时读取的历史时间范围，可设为 1–168 小时 |
@@ -99,7 +115,7 @@ dms ipc call ntfyCenter status
 
 ### 认证优先级
 
-如果填写了 Access Token，插件会使用：
+认证按订阅独立配置。如果某个订阅填写了 Access Token，插件会使用：
 
 ```text
 Authorization: Bearer <token>
@@ -114,12 +130,20 @@ Authorization: Bearer <token>
 
 插件由三个部分组成：
 
-- `NtfyDaemon.qml`：维护后台订阅、自动重连、历史记录和桌面通知。
-- `NtfyWidget.qml`：提供 DankBar 图标、消息列表和文本发布界面。
+- `NtfyDaemon.qml`：为每个启用的订阅维护一个后台流、自动重连、历史记录和桌面通知，并合并所有订阅的消息。
+- `NtfyWidget.qml`：提供 DankBar 图标、合并后的消息列表、发布目标选择和文本发布界面。
 - `scripts/ntfy_client.py`：使用 Python 标准库访问 ntfy HTTP/JSON API。
 
-QML 将连接配置通过标准输入交给 helper，认证信息不会出现在进程命令行参数
-中。最近一条实时消息的 ID 会保存在用户状态目录，用于重连时避免重复通知。
+QML 将每个订阅的连接配置通过标准输入交给 helper，认证信息不会出现在进程
+命令行参数中。最近一条实时消息的 ID 会按“服务器+主题”保存在用户状态目录，
+用于重连时避免重复通知。消息去重也以“服务器+主题+消息 ID”为键，因此不同
+服务器上的同名主题不会互相干扰。
+
+## 从 1.2 升级
+
+首次打开 1.3.0 的插件设置时，原有的单服务器/单主题配置会自动迁移为一个订阅，
+不需要手动重建。迁移后的配置保存在 `subscriptions` 字段中，旧的 `serverUrl`、
+`topic` 等字段会被忽略（但不会删除）。
 
 ## 安全说明
 
@@ -131,7 +155,8 @@ Token 和密码在设置界面中会以密码框显示，但 DMS 插件设置并
 ## 开发与验证
 
 ```bash
-qmllint -I /usr/share/quickshell/dms \
+# 用 DMS 实际的 QML 模块目录替换下面的路径
+qmllint -I /run/user/$UID/danklinux-shell/*/ \
   NtfyDaemon.qml NtfyWidget.qml NtfySettings.qml
 
 python3 -m py_compile scripts/ntfy_client.py
